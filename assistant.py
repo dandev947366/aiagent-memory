@@ -56,7 +56,25 @@ def create_vector_db(conversations):
         )
 
 
+def retrieve_embeddings(prompt):
+    # Generate the embedding for the input prompt
+    response = ollama.embeddings(model="nomic-embed-text", prompt=prompt)
+    prompt_embedding = response["embedding"]
+
+    # Retrieve the collection
+    vector_db = client.get_collection(name="conversations")
+
+    # Query the vector database for the closest matching conversation
+    results = vector_db.query(query_embeddings=[prompt_embedding], n_results=1)
+
+    # Get the best matching document (conversation context)
+    best_embedding = results["documents"][0][0]
+    return best_embedding
+
+
 create_vector_db(conversations=message_history)
 while True:
     prompt = input("USER: \n")
+    context = retrieve_embeddings(prompt=prompt)
+    prompt = f"USER PROMPT: {prompt} \nCONTEXT FROM EMBEDDINGS: {context}"
     stream_response(prompt=prompt)
