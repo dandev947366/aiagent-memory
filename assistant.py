@@ -1,5 +1,7 @@
 import chromadb
 import ollama
+import psycopg
+from psycopg.rows import dict_row
 
 # First pull llama
 # ollama.pull("llama3")
@@ -13,16 +15,29 @@ import ollama
 
 client = chromadb.Client()
 
-message_history = [
-    {"id": 1, "prompt": "What is my name?", "response": "Your name is Dan Le."},
-    {"id": 2, "prompt": "What is square root of 9876?", "response": "99.3780659904"},
-    {
-        "id": 3,
-        "prompt": "What kind of dog do I have?",
-        "response": "Your dog's name is Roxy.",
-    },
-]
+
 convo = []
+DB_PARAMS = {
+    "dbname": "memory_agent",
+    "user": "ai",
+    "password": "password",
+    "host": "localhost",
+    "port": "5432",
+}
+
+
+def connect_db():
+    conn = psycopg.connect(**DB_PARAMS)
+    return conn
+
+
+def fetch_conversations():
+    conn = connect_db()
+    with conn.cursor(row_factory=dict_row) as cursor:
+        cursor.execute("SELECT * FROM conversations")
+        conversations = cursor.fetchall()
+    conn.close()
+    return conversations
 
 
 def stream_response(prompt):
@@ -72,7 +87,9 @@ def retrieve_embeddings(prompt):
     return best_embedding
 
 
-create_vector_db(conversations=message_history)
+conversations = fetch_conversations()
+create_vector_db(conversations=conversations)
+print(fetch_conversations())
 while True:
     prompt = input("USER: \n")
     context = retrieve_embeddings(prompt=prompt)
