@@ -61,7 +61,7 @@ def store_conversations(prompt, response):
 
 
 def stream_response(prompt):
-    convo.append({"role": "user", "content": prompt})
+
     response = ""
     stream = ollama.chat(model="llama3", messages=convo, stream=True)
     print("\nASSISTANT:")
@@ -92,8 +92,30 @@ def create_vector_db(conversations):
         )
 
 
-def retrieve_embeddings(prompt):
-    # Generate the embedding for the input prompt
+def retrieve_embeddings(queries, results_per_query=2):
+    relevant_embeddings = set()  # Set to store unique relevant embeddings
+
+    # Retrieve and classify embeddings for each query
+    for query in queries:
+        # Generate the embedding for the query
+        response = ollama.embeddings(model="nomic-embed-text", prompt=query)
+        query_embedding = response["embedding"]
+
+        # Get the vector database and query for similar embeddings
+        vector_db = client.get_collection(name="conversations")
+        results = vector_db.query(
+            query_embeddings=[query_embedding], n_results=results_per_query
+        )
+        best_embeddings = results["documents"][0]
+
+        # Classify and filter relevant embeddings
+        for best in best_embeddings:
+            classification = classify_embedding(query=query, context=best)
+            if classification == "yes":
+                relevant_embeddings.add(best)
+
+    return relevant_embeddings
+
     response = ollama.embeddings(model="nomic-embed-text", prompt=prompt)
     prompt_embedding = response["embedding"]
 
@@ -139,13 +161,59 @@ def create_queries(prompt):
     ]
     response = ollama.chat(model="llama3", messages=query_convo)
     print(f'\nVector database queries: {response["message"]["content"]} \n')
+    try:
+        return ast.literal_eval(response["message"]["content"])
+    except:
+        return [prompt]
+
+
+def classify_embedding(query, context):
+    classify_msg = (
+        "You are an embedding classification AI agent. Your input will be a prompt and one embedded chunk of text. "
+        'You will not respond as an AI assistant. You only respond "yes" or "no". '
+        "Determine whether the context contains data that directly is related to the search query. "
+        'If the context is seemingly exactly what the search query needs, respond "yes" if it is anything but directly '
+        'related respond "no". Do not respond "yes" unless the content is highly relevant to the search query.'
+    )
+    # Multi-shot learning examples
+    # keep latency as low as possible
+    classify_convo = [
+        {"role": "system", "content": classify_msg},
+        {
+            "role": "user",
+            "content": "SEARCH QUERY: What is the user's name? \n\nEMBEDDED CONTEXT: You are Dan Le. How can I help you?",
+        },
+        {"role": "assistant", "content": "yes"},
+        {
+            "role": "user",
+            "content": "SEARCH QUERY: Llama3 Python Voice Assistant \n\nEMBEDDED CONTEXT: Siri is a voice assistant of Mac OS and Apple iOS .",
+        },
+        {"role": "assistant", "content": "no"},
+        {
+            "role": "user",
+            "content": f"SEARCH QUERY: {query} \n\nEMBEDDED CONTEXT: {context}",
+        },
+    ]
+    response = ollama.chat(model="llama3", messages=classify_convo)
+    return response["message"]["content"].strip().lower()
+
+
+def recall(prompt):
+    queries = create_queries(prompt=prompt)
+    embeddings = retrieve_embeddings(queries=queries)
+    convo.append(
+        {
+            "role": "user",
+            "content": f"MEMORIES: {embeddings} \n\n USER PROMPT: {prompt}",
+        }
+    )
+    print(f"\n{len(embeddings)} message: response embeddings added for context.")
 
 
 conversations = fetch_conversations()
 create_vector_db(conversations=conversations)
-print(fetch_conversations())
+
 while True:
     prompt = input("USER: \n")
-    context = retrieve_embeddings(prompt=prompt)
-    prompt = f"USER PROMPT: {prompt} \nCONTEXT FROM EMBEDDINGS: {context}"
+    recall(prompt=prompt)
     stream_response(prompt=prompt)
