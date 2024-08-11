@@ -3,7 +3,9 @@ import ast
 import chromadb
 import ollama
 import psycopg
+from colorama import Fore
 from psycopg.rows import dict_row
+from tqdm import tqdm
 
 # First pull llama
 # ollama.pull("llama3")
@@ -60,11 +62,19 @@ def store_conversations(prompt, response):
     conn.close()
 
 
+def remove_last_conversation():
+    conn = connect_db()
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM conversations WHERE id=(SELECT MAX(id) FROM conversations)"
+        )
+
+
 def stream_response(prompt):
 
     response = ""
     stream = ollama.chat(model="llama3", messages=convo, stream=True)
-    print("\nASSISTANT:")
+    print(Fore.LIGHTGREEN_EX + "\nASSISTANT:")
 
     for chunk in stream:
         content = chunk["message"]["content"]
@@ -96,7 +106,7 @@ def retrieve_embeddings(queries, results_per_query=2):
     relevant_embeddings = set()  # Set to store unique relevant embeddings
 
     # Retrieve and classify embeddings for each query
-    for query in queries:
+    for query in tqdm(queries, desc="Processing queries to vector database"):
         # Generate the embedding for the query
         response = ollama.embeddings(model="nomic-embed-text", prompt=query)
         query_embedding = response["embedding"]
@@ -111,23 +121,13 @@ def retrieve_embeddings(queries, results_per_query=2):
         # Classify and filter relevant embeddings
         for best in best_embeddings:
             classification = classify_embedding(query=query, context=best)
+            print(
+                f"Classifying embedding: {best} for query: {query} - Classification: {classification}"
+            )
             if classification == "yes":
                 relevant_embeddings.add(best)
 
     return relevant_embeddings
-
-    response = ollama.embeddings(model="nomic-embed-text", prompt=prompt)
-    prompt_embedding = response["embedding"]
-
-    # Retrieve the collection
-    vector_db = client.get_collection(name="conversations")
-
-    # Query the vector database for the closest matching conversation
-    results = vector_db.query(query_embeddings=[prompt_embedding], n_results=1)
-
-    # Get the best matching document (conversation context)
-    best_embedding = results["documents"][0][0]
-    return best_embedding
 
 
 def create_queries(prompt):
@@ -160,7 +160,9 @@ def create_queries(prompt):
         {"role": "user", "content": prompt},
     ]
     response = ollama.chat(model="llama3", messages=query_convo)
-    print(f'\nVector database queries: {response["message"]["content"]} \n')
+    print(
+        Fore.YELLOW + f'\nVector database queries: {response["message"]["content"]} \n'
+    )
     try:
         return ast.literal_eval(response["message"]["content"])
     except:
@@ -176,44 +178,50 @@ def classify_embedding(query, context):
         'related respond "no". Do not respond "yes" unless the content is highly relevant to the search query.'
     )
     # Multi-shot learning examples
-    # keep latency as low as possible
     classify_convo = [
         {"role": "system", "content": classify_msg},
-        {
-            "role": "user",
-            "content": "SEARCH QUERY: What is the user's name? \n\nEMBEDDED CONTEXT: You are Dan Le. How can I help you?",
-        },
-        {"role": "assistant", "content": "yes"},
-        {
-            "role": "user",
-            "content": "SEARCH QUERY: Llama3 Python Voice Assistant \n\nEMBEDDED CONTEXT: Siri is a voice assistant of Mac OS and Apple iOS .",
-        },
-        {"role": "assistant", "content": "no"},
         {
             "role": "user",
             "content": f"SEARCH QUERY: {query} \n\nEMBEDDED CONTEXT: {context}",
         },
     ]
     response = ollama.chat(model="llama3", messages=classify_convo)
-    return response["message"]["content"].strip().lower()
+    classification = response["message"]["content"].strip().lower()
+    print(f"Classify response: {classification} for query: {query}")
+    return classification
 
 
 def recall(prompt):
     queries = create_queries(prompt=prompt)
+    print(f"Generated queries for recall: {queries}")
     embeddings = retrieve_embeddings(queries=queries)
     convo.append(
         {
             "role": "user",
-            "content": f"MEMORIES: {embeddings} \n\n USER PROMPT: {prompt}",
+            "content": f"MEMORIES: {embeddings} \n\nUSER PROMPT: {prompt}",
         }
     )
-    print(f"\n{len(embeddings)} message: response embeddings added for context.")
+    print(f"\n{len(embeddings)} message(s): response embeddings added for context.")
 
 
 conversations = fetch_conversations()
 create_vector_db(conversations=conversations)
 
 while True:
-    prompt = input("USER: \n")
-    recall(prompt=prompt)
+    prompt = input(Fore.WHITE + "USER: \n")
+    if prompt[:7].lower() == "/recall":
+        prompt = prompt[8:]
+        recall(prompt=prompt)
+        stream_response(prompt=prompt)
+    elif prompt[:7].lower() == "/forget":
+        remove_last_conversation()
+        convo = convo[:2]
+        print("\n")
+    elif prompt[:9].lower() == "/memorize":
+        prompt = prompt[10:]
+        store_conversations(prompt=prompt, response="Memory stored.")
+        print("\n")
+    else:
+        convo.append({"role": "user", "content": prompt})
+        stream_response(prompt=prompt)
     stream_response(prompt=prompt)
