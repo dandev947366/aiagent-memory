@@ -1,3 +1,5 @@
+import ast
+
 import chromadb
 import ollama
 import psycopg
@@ -104,6 +106,39 @@ def retrieve_embeddings(prompt):
     # Get the best matching document (conversation context)
     best_embedding = results["documents"][0][0]
     return best_embedding
+
+
+def create_queries(prompt):
+    query_msg = (
+        "You are a first principle reasoning search query AI agent."
+        "Your list of search queries will be ran on an embedding of all your conversations "
+        "you have ever had with the user. With first principles create a Python list of queries to "
+        "search the embeddings database for any data that would be necessary to have access to in "
+        "order to correctly respond to the prompt. Your response must be a Python list with no syntax errors."
+        "Do not explain anything and do not ever generate anything but a perfect syntax Python list"
+    )
+    query_convo = [
+        {"role": "system", "content": query_msg},
+        {
+            "role": "user",
+            "content": "Write an email to my car insurance company and create a pursuasive request for them to lower my monthly rate",
+        },
+        {
+            "role": "assistant",
+            "content": "['What is the users name?', 'What is the users current auto insurance provider?', 'What is the monthly rate the user currently pays for auto insurance?']",
+        },
+        {
+            "role": "user",
+            "content": "how can I convert the speak function in my llama3 python voice assistant to use pyttsx3",
+        },
+        {
+            "role": "assistant",
+            "content": '["Llama3 voice assistant", "Python voice assistant, "OpenAI TTS", "openai speak"]',
+        },
+        {"role": "user", "content": prompt},
+    ]
+    response = ollama.chat(model="llama3", messages=query_convo)
+    print(f'\nVector database queries: {response["message"]["content"]} \n')
 
 
 conversations = fetch_conversations()
